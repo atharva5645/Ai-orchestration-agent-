@@ -1,0 +1,17 @@
+fastapi>=0.115.0
+uvicorn>=0.30.1
+pydantic>=2.9.0
+pydantic==2.6.3
+pydantic-settings>=2.5.0
+langgraph>=0.2.0
+langchain-google-genai>=1.0.6
+langchain-openai>=0.1.16
+langchain-core>=0.3.0
+tavily-python>=0.3.3
+yfinance==0.2.37
+chromadb>=0.5.3
+python-dotenv>=1.0.1
+tenacity>=8.3.0
+google-generativeai>=0.5.4
+streamlit==1.32.0
+requests==2.31.0
