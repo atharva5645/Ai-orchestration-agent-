@@ -1,9 +1,10 @@
 import os
 import shutil
 import logging
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from app.models.schemas import DocumentUploadResponse
 from app.tools.rag.pdf_parser import ingest_pdf
+from app.tools.rag.vectorstore import VectorStoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +61,6 @@ async def upload_document(
 @router.post("/reset")
 async def reset_vectorstore():
     try:
-        from app.tools.rag.vectorstore import VectorStoreManager
-        
         # If the DB is loaded in memory, try to delete the collection first 
         # to bypass Windows SQLite file lock (WinError 32) issues.
         if hasattr(VectorStoreManager, "_instance") and VectorStoreManager._instance is not None:
@@ -71,22 +70,25 @@ async def reset_vectorstore():
                 logger.warning(f"Failed to delete collection via API: {e}")
             VectorStoreManager._instance = None
             
-        import shutil
         chroma_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), 
-            "..", "..", "..", "chroma_db")
+            os.path.join(
+                os.path.dirname(__file__),
+                "..", "..", "..", "chroma_db"
+            )
         )
-        
         if os.path.exists(chroma_path):
             try:
                 shutil.rmtree(chroma_path)
             except Exception as e:
-                logger.warning(f"Could not remove chroma_db completely (likely file lock): {e}")
+                logger.warning(f"Could not completely remove chroma_db directory due to file locks: {e}")
                 
-        if not os.path.exists(chroma_path):
-            os.makedirs(chroma_path, exist_ok=True)
+        os.makedirs(chroma_path, exist_ok=True)
         
-        return {"status": "success", "message": "Vector DB reset complete"}
+        # Reset singleton so next request creates fresh DB
+        VectorStoreManager._instance = None
+        
+        return {"status": "success", 
+                "message": "Vector DB reset complete"}
     except Exception as e:
         logger.error(f"Reset failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
