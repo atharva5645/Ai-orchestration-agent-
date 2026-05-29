@@ -70,6 +70,20 @@ with st.sidebar:
             except Exception as e:
                 progress_text.empty()
                 st.error(f"❌ Error: {str(e)}")
+                
+    st.divider()
+    if st.button("🗑️ Reset Vector DB"):
+        try:
+            res = requests.post(
+                f"{BACKEND_URL}/api/v1/documents/reset",
+                timeout=30
+            )
+            if res.status_code == 200:
+                st.success("✅ Vector DB reset successfully! Please re-ingest your PDFs.")
+            else:
+                st.error(f"Reset failed: {res.text}")
+        except Exception as e:
+            st.error(f"Error: {str(e)}")
 
 
 # --- MAIN CHAT INTERFACE ---
@@ -168,19 +182,7 @@ if query:
                     # First block is the report title (before first ## heading)
                     title_block = sections[0].strip()
                     if title_block:
-                        st.markdown(f"""
-                        <div style="
-                            background: linear-gradient(90deg, #1a1a2e, #16213e);
-                            padding: 16px 20px;
-                            border-radius: 8px;
-                            border-left: 4px solid #00d4aa;
-                            margin-bottom: 16px;
-                        ">
-                            <h2 style="color: #00d4aa; margin: 0; font-size: 1.4em;">
-                                📊 {title_block}
-                            </h2>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        st.markdown(title_block)
                     
                     for i, section in enumerate(sections[1:]):
                         lines = section.strip().split("\n", 1)
