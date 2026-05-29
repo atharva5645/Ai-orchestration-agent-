@@ -13,13 +13,17 @@ class ResearchState(TypedDict):
     
     # User Inputs & Planning
     query: str
+    ticker: str
     research_plan: str
     sector_classification: str
     
     # Iterative Research Data
     search_history: Annotated[List[Dict[str, Any]], operator.add]
+    raw_search_data: str
     findings: Annotated[List[str], operator.add]
     reflection_output: str
+    company_symbol: str
+    extracted_ticker: str
     next_search_queries: List[str]
     is_sufficient: bool
     current_research_step: str

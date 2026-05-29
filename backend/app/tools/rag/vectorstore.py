@@ -6,7 +6,7 @@ from app.tools.rag.embeddings import get_embeddings
 logger = logging.getLogger(__name__)
 
 # Store Chroma DB locally in the project root
-CHROMA_PERSIST_DIR = os.path.join(os.getcwd(), "chroma_db")
+CHROMA_PERSIST_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "chroma_db"))
 COLLECTION_NAME = "financial_reports"
 
 class VectorStoreManager:

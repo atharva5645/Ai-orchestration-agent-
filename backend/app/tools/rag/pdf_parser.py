@@ -1,6 +1,7 @@
 import os
+import time
 import logging
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app.tools.rag.vectorstore import get_vectorstore
 
@@ -14,9 +15,15 @@ def ingest_pdf(file_path: str, asset_ticker: str):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"PDF not found at {file_path}")
 
-    logger.info(f"Loading PDF from {file_path}...")
-    loader = PyPDFLoader(file_path)
+    start_time = time.time()
+    logger.info(f"Loading PDF from {file_path} using PyMuPDF...")
+    
+    # PyMuPDF is significantly faster than PyPDFLoader for parsing
+    loader = PyMuPDFLoader(file_path)
     documents = loader.load()
+    
+    parse_time = time.time() - start_time
+    logger.info(f"PDF parsed in {parse_time:.2f} seconds.")
 
     # Financial documents have large tables and dense paragraphs.
     # A chunk size of 1500 with 300 overlap ensures we don't sever tables in half.
@@ -39,10 +46,24 @@ def ingest_pdf(file_path: str, asset_ticker: str):
     
     if not chunks:
         logger.warning("No text could be extracted from this PDF.")
-        return 0
+        return 0, 0.0
 
     vectorstore = get_vectorstore()
-    vectorstore.add_documents(chunks)
     
-    logger.info("Ingestion complete.")
-    return len(chunks)
+    batch_size = 100
+    total_batches = (len(chunks) + batch_size - 1) // batch_size
+    
+    embed_start_time = time.time()
+    for i in range(total_batches):
+        start_idx = i * batch_size
+        end_idx = min((i + 1) * batch_size, len(chunks))
+        batch = chunks[start_idx:end_idx]
+        
+        logger.info(f"Embedding batch {i+1}/{total_batches}...")
+        vectorstore.add_documents(batch)
+    
+    embed_time = time.time() - embed_start_time
+    total_time = time.time() - start_time
+    
+    logger.info(f"Ingestion complete! Embedded in {embed_time:.2f}s. Total pipeline time: {total_time:.2f}s.")
+    return len(chunks), total_time

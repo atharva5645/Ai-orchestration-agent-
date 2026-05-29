@@ -2,6 +2,8 @@ import streamlit as st
 import requests
 import json
 
+import re
+
 # Set up the page configuration
 st.set_page_config(
     page_title="Deep Research AI",
@@ -33,35 +35,110 @@ with col2:
 
 # Submit button
 if st.button("Generate Research Report", type="primary"):
-    if not company_symbol or not query:
+    if not query or not query.strip():
+        st.warning("Please enter a question")
+    elif not company_symbol:
         st.warning("Please enter both a company symbol and a research query.")
     else:
         # Prepare the payload
         payload = {
-            "query": query,
-            "company_symbol": company_symbol
+            "query": query.strip(),
+            "company_symbol": company_symbol.strip()
         }
 
-        with st.spinner("Agents are deeply researching the web and analyzing data. This may take a minute..."):
+        status_placeholder = st.empty()
+        report_placeholder = st.empty()
+        
+        import threading
+        import time
+        from streamlit.runtime.scriptrunner import add_script_run_ctx
+
+        # Shared state for thread communication
+        thread_state = {"is_running": True, "result": None, "error": None}
+
+        def fetch_data():
             try:
-                # Call the FastAPI backend with a longer timeout
+                # Backend is now a single blocking call (simulated or real)
                 response = requests.post("http://127.0.0.1:8000/api/v1/research/", json=payload, timeout=300)
-                
                 if response.status_code == 200:
-                    data = response.json()
-                    status = data.get("status")
-                    final_report = str(data.get("final_report", ""))
-
-                    if "Query Rejected" in final_report or "We only provide answers" in final_report or "apologize" in final_report:
-                        st.error(final_report)
+                    data = response.json() if "application/json" in response.headers.get("Content-Type", "") else None
+                    if not data:
+                        # Fallback for ndjson stream if it's still returning stream
+                        lines = [line.decode('utf-8') for line in response.iter_lines() if line]
+                        for line in lines:
+                            try:
+                                d = json.loads(line)
+                                if d.get("type") == "complete":
+                                    thread_state["result"] = d.get("final_report", "")
+                                elif d.get("type") == "error":
+                                    thread_state["error"] = d.get("message", "Unknown error")
+                            except Exception:
+                                pass
                     else:
-                        st.success("Research Complete!")
-                        st.markdown("### Final Report")
-                        st.markdown(f'<div class="report-box">{final_report}</div>', unsafe_allow_html=True)
+                        thread_state["result"] = data.get("final_report", "")
                 else:
-                    st.error(f"Backend Error: {response.status_code}")
-                    st.write(response.text)
-
+                    thread_state["error"] = f"Backend Error: {response.status_code}"
             except requests.exceptions.RequestException as e:
-                st.error(f"Failed to connect to the backend: {e}")
-                st.info("Make sure the Uvicorn server is running on http://127.0.0.1:8000")
+                thread_state["error"] = f"Failed to connect to the backend: {e}"
+            finally:
+                thread_state["is_running"] = False
+
+        # Start background thread
+        req_thread = threading.Thread(target=fetch_data)
+        add_script_run_ctx(req_thread)
+        req_thread.start()
+
+        # Simulated progress steps
+        steps = [
+            "🔍 Searching the web...",
+            "📊 Fetching stock data...",
+            "🧠 Analysing findings...",
+            "✍️ Writing your report..."
+        ]
+        
+        step_idx = 0
+        while thread_state["is_running"]:
+            if step_idx < len(steps):
+                status_placeholder.info(steps[step_idx])
+                step_idx += 1
+            # Sleep in chunks to keep UI responsive
+            for _ in range(20): 
+                if not thread_state["is_running"]:
+                    break
+                time.sleep(0.1)
+
+        req_thread.join()
+
+        if thread_state["error"]:
+            status_placeholder.error(thread_state["error"])
+        elif thread_state["result"]:
+            status_placeholder.success("Research Complete!")
+            final_report = str(thread_state["result"])
+            
+            if "Query Rejected" in final_report or "We only provide answers" in final_report or "apologize" in final_report:
+                report_placeholder.error(final_report)
+            else:
+                with report_placeholder.container():
+                    st.markdown("### Final Report")
+                    
+                    lines = final_report.split('\n')
+                    sections = []
+                    current_title = ""
+                    current_content = []
+                    
+                    for line in lines:
+                        if re.match(r'^##\s+', line):
+                            if current_title or current_content:
+                                sections.append((current_title, current_content))
+                            current_title = re.sub(r'^##\s+', '', line).strip()
+                            current_content = []
+                        else:
+                            current_content.append(line)
+                            
+                    if current_title or current_content:
+                        sections.append((current_title, current_content))
+                        
+                    for i, (title, content) in enumerate(sections):
+                        is_expanded = (i == 0) # Only first section expanded
+                        with st.expander(title if title else "Overview", expanded=is_expanded):
+                            st.markdown('\n'.join(content))

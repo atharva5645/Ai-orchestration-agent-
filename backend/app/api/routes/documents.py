@@ -36,13 +36,14 @@ async def upload_document(
         logger.info(f"File {file.filename} saved to {file_path}. Initiating RAG ingestion for {ticker}...")
         
         # 2. Ingest into ChromaDB
-        chunks_inserted = ingest_pdf(file_path, ticker)
+        chunks_inserted, time_taken = ingest_pdf(file_path, ticker)
         
         return DocumentUploadResponse(
             status="success",
             filename=file.filename,
             ticker=ticker.upper(),
             chunks_processed=chunks_inserted,
+            time_taken=time_taken,
             message="Document successfully embedded into local ChromaDB."
         )
 

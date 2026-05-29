@@ -51,7 +51,7 @@ class GeminiLLMClientRotator:
         # Track when each key was last exhausted. key_index -> datetime
         self._exhausted_until: dict[int, datetime] = {}
 
-    def _get_next_client(self):
+    async def _get_next_client(self):
         """
         Returns the first non-exhausted client in order.
         If all are exhausted, waits for the soonest one to reset.
@@ -67,7 +67,10 @@ class GeminiLLMClientRotator:
         soonest_idx = min(self._exhausted_until, key=lambda k: self._exhausted_until[k])
         soonest_time = self._exhausted_until[soonest_idx]
         wait_secs = max(0, (soonest_time - now).total_seconds())
-        logger.warning(f"All API keys exhausted. Key #{soonest_idx+1} resets in {wait_secs:.0f}s. Waiting...")
+        if wait_secs > 0:
+            logger.warning(f"All API keys exhausted. Key #{soonest_idx+1} resets in {wait_secs:.0f}s. Sleeping...")
+            await asyncio.sleep(wait_secs)
+            
         return soonest_idx, self.clients[soonest_idx]
 
     def _mark_exhausted(self, idx: int, retry_delay_seconds: int = 60):
@@ -79,7 +82,7 @@ class GeminiLLMClientRotator:
         """Invoke with smart key rotation — instantly switches on quota errors."""
         max_attempts = len(self.clients) * 3
         for attempt in range(max_attempts):
-            idx, client = self._get_next_client()
+            idx, client = await self._get_next_client()
             try:
                 response = await client.ainvoke(messages)
                 return response
@@ -101,7 +104,7 @@ class GeminiLLMClientRotator:
         """Invoke with structured output and smart key rotation."""
         max_attempts = len(self.clients) * 3
         for attempt in range(max_attempts):
-            idx, client = self._get_next_client()
+            idx, client = await self._get_next_client()
             try:
                 structured_client = client.with_structured_output(schema)
                 response = await structured_client.ainvoke(messages)

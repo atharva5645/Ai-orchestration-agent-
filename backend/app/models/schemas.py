@@ -15,4 +15,5 @@ class DocumentUploadResponse(BaseModel):
     filename: str
     ticker: str
     chunks_processed: int
+    time_taken: Optional[float] = None
     message: str

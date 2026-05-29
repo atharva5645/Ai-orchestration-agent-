@@ -5,91 +5,62 @@ from app.agents.shared.llm import gemini_client
 
 logger = logging.getLogger(__name__)
 
-REPORTER_SYSTEM_PROMPT = """You are an elite Wall Street Financial Analyst and Expert Copywriter.
-Your task is to synthesize raw research findings, market data, and quantitative financial metrics into a professional, investor-grade Research Report.
-
-You MUST use Markdown formatting and strictly adhere to the following 10-section structure. Do not skip any sections.
-
-# [Company/Asset Name] - Comprehensive Research Report
-
-## 1. Executive Summary
-Provide a high-level overview of the asset, its current market position, and the core thesis of the research.
-
-## 2. Market Overview
-Describe the broader macroeconomic environment, sector conditions, and total addressable market (TAM).
-
-## 3. Company Analysis
-Detail the company's business model, revenue streams, and core operations.
-
-## 4. Financial Metrics
-Synthesize the quantitative financial data provided. Highlight PE ratio, EBITDA, revenue growth, margins, and market capitalization. Explain what these numbers indicate about the company's health.
-
-## 5. Competitor Comparison
-Compare the asset against key industry rivals. Highlight competitive advantages (moats) or disadvantages.
-
-## 6. Key Trends
-Identify technological, regulatory, or consumer trends impacting the asset.
-
-## 7. Risks
-Detail material risks including market risks, operational risks, and regulatory threats.
-
-## 8. Opportunities
-Highlight growth avenues, potential expansions, or upcoming catalysts.
-
-## 9. Future Outlook
-Provide a forward-looking synthesis. Where is the asset heading in the next 1-3 years?
-
-## 10. Sources
-List the exact sources and URLs used to compile this report (extracted from the search history).
-
-Rules:
-- Use professional, objective, and analytical tone.
-- Do not hallucinate financial data. If specific numbers are not provided in the context, explicitly state "Data not available."
-- Format beautifully with bullet points, bold text for emphasis, and clear spacing.
-"""
-
 async def reporter_node(state: ResearchState):
     """
-    Synthesizes the final markdown report from all gathered research.
+    Synthesizes the final markdown report from all gathered research with strict token limit.
     """
     logger.info("Generating final investor-grade report...")
 
     # Compile the raw context
-    findings = "\n".join(state.get("findings", []))
-    financial_data = state.get("financial_data", {})
+    findings_summary = "\n".join(state.get("findings", []))
     history = state.get("search_history", [])
+    query = state.get("query", "")
     
-    # Format financial data nicely
-    finance_str = "No specific quantitative financial data extracted."
-    if financial_data:
-        finance_str = "Extracted Financial Data:\n"
-        for k, v in financial_data.items():
-            finance_str += f"- {k}: {v}\n"
-            
-    sources_str = "Search History/Sources:\n" + "\n".join([f"- {s}" for s in history])
+    # Extract unique URLs from search history to pass as context
+    unique_urls = list(set([item.get('url') for item in history if isinstance(item, dict) and 'url' in item]))
+    sources_context = "\n".join([f"- {url}" for url in unique_urls])
 
-    # Construct the user prompt
-    user_prompt = f"""
-Please generate the final research report based on the following context.
+    sys_msg = SystemMessage(content="You are a Wall Street financial analyst writing a concise investor report.")
+    
+    prompt = f"""
+Write a structured report with EXACTLY these 6 sections.
+Keep each section to 3-5 bullet points. Be concise and use real numbers.
 
-[QUALITATIVE FINDINGS]
-{findings}
+## 1. Executive Summary
+## 2. Financial Metrics
+(Use exact numbers from the data. Write "Data not available" if missing. Do NOT guess.)
+## 3. Competitive Position
+## 4. Key Risks
+## 5. Opportunities & Outlook
+## 6. Sources
+(List all URLs from the research data)
 
-[QUANTITATIVE FINANCIAL DATA]
-{finance_str}
+Total report must be under 800 words.
+Do not add any sections beyond these 6.
+Do not hallucinate any numbers.
 
-[SOURCES]
-{sources_str}
+User query: "{query}"
+
+Research summary:
+{findings_summary}
+
+Available Sources Context:
+{sources_context}
 """
 
     messages = [
-        SystemMessage(content=REPORTER_SYSTEM_PROMPT),
-        HumanMessage(content=user_prompt)
+        sys_msg,
+        HumanMessage(content=prompt)
     ]
 
-    # Generate the report
-    response = await gemini_client.ainvoke(messages)
-    final_report = response.content
+    try:
+        response = await gemini_client.ainvoke(messages)
+        final_report = response.content
+        if isinstance(final_report, list):
+            final_report = " ".join([str(item.get("text", item)) if isinstance(item, dict) else str(item) for item in final_report])
+    except Exception as e:
+        logger.error(f"Report generation failed: {e}")
+        final_report = f"Failed to generate final report: {e}"
 
     logger.info("Report generation complete.")
     

@@ -1,74 +1,81 @@
 import logging
 from typing import Dict, Any
-from pydantic import BaseModel, Field
-from langchain_core.messages import HumanMessage, SystemMessage
-
 from app.state.research_state import ResearchState
-from app.agents.shared.llm import gemini_client
-
-from app.tools.finance.market_data import get_company_info, get_historical_prices, get_financial_statements
-from app.tools.finance.calculations import calculate_moving_averages, calculate_yoy_growth
-from app.tools.finance.ratios import extract_key_ratios
+from app.tools.finance.market_data import get_company_info
 
 logger = logging.getLogger(__name__)
-
-class TickerExtraction(BaseModel):
-    has_ticker: bool = Field(description="True if a public company ticker symbol was mentioned.")
-    ticker_symbol: str = Field(description="The primary stock ticker symbol (e.g. AAPL, TSLA). Empty if none.")
 
 async def finance_node(state: ResearchState) -> Dict[str, Any]:
     """
     Extracts numerical financial data deterministically using yfinance.
+    Uses the ticker identified by the router_planner.
     """
     logger.info("--- FINANCE NODE (QUANTITATIVE ANALYSIS) ---")
+    
+    company_symbol = state.get("company_symbol", "")
+    extracted_ticker = state.get("extracted_ticker", "")
     query = state.get("query", "")
-    
-    # 1. Extract Ticker
-    sys_msg = SystemMessage(content="You extract stock ticker symbols from user queries.")
-    prompt = f"Query: {query}\nExtract the primary public company ticker symbol."
-    
-    try:
-        extraction = await gemini_client.ainvoke_structured(
-            messages=[sys_msg, HumanMessage(content=prompt)],
-            schema=TickerExtraction
-        )
-    except Exception as e:
-        logger.error(f"Failed to extract ticker: {e}")
-        extraction = TickerExtraction(has_ticker=False, ticker_symbol="")
-        
+    sector = state.get("sector_classification", "")
     financial_data = {}
+    final_ticker = "NONE"
     
-    # 2. Fetch Data if Ticker Exists
-    if extraction.has_ticker and extraction.ticker_symbol:
-        ticker = extraction.ticker_symbol.upper()
-        logger.info(f"Extracting deterministic financial data for {ticker}...")
-        
-        info = get_company_info(ticker)
-        ratios = extract_key_ratios(ticker)
-        
-        hist = get_historical_prices(ticker, "1y")
-        mas = calculate_moving_averages(hist)
-        
-        statements = get_financial_statements(ticker)
-        yoy_revenue = calculate_yoy_growth(statements.get("income_statement"), "Total Revenue")
-        
-        financial_data = {
-            "ticker": ticker,
-            "company_name": info.get("shortName"),
-            "current_price": info.get("currentPrice"),
-            "market_cap": info.get("marketCap"),
-            "trailing_pe": ratios.get("Trailing_PE"),
-            "profit_margin_pct": ratios.get("Profit_Margin"),
-            "return_on_equity_pct": ratios.get("Return_on_Equity"),
-            "sma_50": mas.get("SMA_50"),
-            "sma_200": mas.get("SMA_200"),
-            "yoy_revenue_growth_pct": yoy_revenue
-        }
-        logger.info(f"Financial Data Retrieved: {financial_data}")
+    if company_symbol and company_symbol.upper() != "NONE":
+        final_ticker = company_symbol.upper()
+        logger.info(f"Using company_symbol from API request: {final_ticker}")
+    elif extracted_ticker and extracted_ticker.upper() != "NONE":
+        final_ticker = extracted_ticker.upper()
+        logger.info(f"Using extracted_ticker from LLM router: {final_ticker}")
     else:
-        logger.info("No specific ticker found. Skipping yfinance extraction.")
+        logger.info("No ticker found in API request or LLM extraction, assuming NONE.")
+
+    # Fetch Data if Ticker Exists
+    if final_ticker != "NONE":
+        logger.info(f"Extracting deterministic financial data for {final_ticker}...")
         
+        # Indian ticker detection logic
+        indian_keywords = ["india", "indian", "nse", "bse", "nifty", "sensex"]
+        indian_sectors = ["Banking", "IT", "Pharma", "FMCG", "Auto"]
+        
+        query_lower = query.lower()
+        is_indian_context = any(kw in query_lower for kw in indian_keywords) or (sector in indian_sectors)
+        
+        info = None
+        try:
+            if not (final_ticker.endswith(".NS") or final_ticker.endswith(".BO")) and is_indian_context:
+                logger.info(f"Indian context detected. Trying {final_ticker}.NS first...")
+                info = get_company_info(f"{final_ticker}.NS")
+                if info:
+                    final_ticker = f"{final_ticker}.NS"
+                else:
+                    logger.info(f"{final_ticker}.NS failed, trying {final_ticker}.BO...")
+                    info = get_company_info(f"{final_ticker}.BO")
+                    if info:
+                        final_ticker = f"{final_ticker}.BO"
+            
+            # If still no info or not Indian context, try the original ticker
+            if not info:
+                info = get_company_info(final_ticker)
+
+            if info:
+                financial_data = {
+                    "marketCap": info.get("marketCap"),
+                    "forwardPE": info.get("forwardPE"),
+                    "trailingPE": info.get("trailingPE"),
+                    "profitMargins": info.get("profitMargins"),
+                    "52WeekHigh": info.get("fiftyTwoWeekHigh"),
+                    "52WeekLow": info.get("fiftyTwoWeekLow"),
+                    "dividendYield": info.get("dividendYield"),
+                    "revenueGrowth": info.get("revenueGrowth")
+                }
+                logger.info(f"Successfully fetched financial data for {final_ticker}")
+            else:
+                logger.warning(f"No company info returned for {final_ticker}")
+        except Exception as e:
+            logger.error(f"Error fetching financial data for {final_ticker}: {e}")
+            financial_data = {"error": f"Failed to fetch data for {final_ticker}"}
+
     return {
         "financial_data": financial_data,
-        "current_research_step": "finance_analysis_completed"
+        "ticker": final_ticker,
+        "current_research_step": "finance_completed"
     }
